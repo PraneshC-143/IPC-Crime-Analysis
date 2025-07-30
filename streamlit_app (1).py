@@ -128,3 +128,8 @@ if df is not None:
 
     st.markdown("---")
     st.markdown("Developed for government crime analysis and prediction.")
+url = "https://raw.githubusercontent.com/PraneshC-143/IPC-Crime-Analysis/main/districtwise-ipc-crimes.xlsx"
+df = pd.read_excel(url)
+
+st.title("IPC Crime Analysis Dashboard")
+st.write(df.head())
