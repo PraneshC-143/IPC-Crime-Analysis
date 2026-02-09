@@ -19,29 +19,34 @@ st.set_page_config(
 )
 
 # ==================================================
-# CLEAN ACADEMIC UI
+# MINIMAL GOVERNMENT-STYLE UI
 # ==================================================
 st.markdown("""
 <style>
 .main { background-color: #fafafa; }
+
 section[data-testid="stSidebar"] {
-    background-color: #fafafa;
+    background-color: #f9fafb;
     border-right: 1px solid #e5e7eb;
 }
+
 .kpi {
     background: white;
-    padding: 14px;
-    border-radius: 6px;
+    padding: 16px;
+    border-radius: 8px;
     border: 1px solid #e5e7eb;
 }
+
 .kpi p {
     margin: 0;
     font-size: 13px;
     color: #6b7280;
 }
+
 .kpi h2 {
-    margin-top: 4px;
-    font-size: 20px;
+    margin-top: 6px;
+    font-size: 22px;
+    color: #111827;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -53,28 +58,21 @@ section[data-testid="stSidebar"] {
 def load_data(file):
     path = os.path.join(os.path.dirname(__file__), file)
     df = pd.read_excel(path, sheet_name="districtwise-ipc-crimes")
+
     df = df.drop(columns=["id", "state_code", "district_code"])
     crime_cols = df.select_dtypes(include="number").columns.drop("year")
+
     df["total_crimes"] = df[crime_cols].sum(axis=1)
-    features = crime_cols.tolist() + ["year"]
-    return df, crime_cols, features
+    feature_cols = crime_cols.tolist() + ["year"]
+
+    return df, crime_cols, feature_cols
 
 df, crime_columns, feature_columns = load_data(
     "districtwise-ipc-crimes.xlsx"
 )
 
 # ==================================================
-# INDIA STATES GEOJSON (NO LAT/LON NEEDED)
-# ==================================================
-@st.cache_data
-def india_states_geojson():
-    return (
-        "https://raw.githubusercontent.com/"
-        "datameet/maps/master/States/india_states.geojson"
-    )
-
-# ==================================================
-# MODEL (ACADEMIC – UNCHANGED LOGIC)
+# ML MODEL (UNCHANGED)
 # ==================================================
 @st.cache_resource
 def train_model(x, y):
@@ -90,43 +88,45 @@ def train_model(x, y):
     return model, x_test, y_test
 
 # ==================================================
-# SIDEBAR – FILTERS & PREPROCESSING
+# SIDEBAR – FILTERS
 # ==================================================
 st.sidebar.title("CrimeScope")
 st.sidebar.caption("District-wise IPC Crime Analysis")
 
-state = st.sidebar.selectbox(
-    "State",
-    sorted(df["state_name"].unique())
-)
+with st.sidebar.expander("📍 Location", expanded=True):
+    state = st.selectbox(
+        "State",
+        sorted(df["state_name"].unique())
+    )
+    df_state = df[df["state_name"] == state]
 
-df_state = df[df["state_name"] == state]
+    district = st.selectbox(
+        "District",
+        ["All Districts"] + sorted(df_state["district_name"].unique())
+    )
 
-district = st.sidebar.selectbox(
-    "District",
-    ["All Districts"] + sorted(df_state["district_name"].unique())
-)
+with st.sidebar.expander("📅 Time", expanded=True):
+    year_range = st.slider(
+        "Year Range",
+        int(df["year"].min()),
+        int(df["year"].max()),
+        (int(df["year"].min()), int(df["year"].max()))
+    )
 
-year_range = st.sidebar.slider(
-    "Year Range",
-    int(df["year"].min()),
-    int(df["year"].max()),
-    (int(df["year"].min()), int(df["year"].max()))
-)
+with st.sidebar.expander("🚨 Crime Types", expanded=True):
+    selected_crimes = st.multiselect(
+        "Select Crime Types",
+        crime_columns.tolist(),
+        default=crime_columns.tolist()
+    )
 
-selected_crimes = st.sidebar.multiselect(
-    "Crime Types",
-    crime_columns.tolist(),
-    default=crime_columns.tolist()
-)
-
-aggregation_mode = st.sidebar.radio(
-    "Aggregation Mode",
-    ["Total Crimes", "Average per Year"]
-)
+    aggregation_mode = st.radio(
+        "Aggregation Mode",
+        ["Total Crimes", "Average per Year"]
+    )
 
 # ==================================================
-# INTERACTIVE PREPROCESSING
+# INTERACTIVE PREPROCESSING (CORE FIX)
 # ==================================================
 df_pre = df_state[
     (df_state["year"] >= year_range[0]) &
@@ -145,10 +145,22 @@ if aggregation_mode == "Average per Year":
     )
 
 # ==================================================
-# HEADER & KPI
+# HEADER + CONTEXT
 # ==================================================
 st.markdown("## District-wise IPC Crime Analysis")
 
+st.markdown(
+    f"""
+    **State:** {state}  
+    **District:** {district}  
+    **Years:** {year_range[0]} – {year_range[1]}  
+    **Crime Types:** {", ".join(selected_crimes)}
+    """
+)
+
+# ==================================================
+# KPI CARDS
+# ==================================================
 total_crimes = int(df_pre["selected_total_crimes"].sum())
 peak_year = df_pre.groupby("year")["selected_total_crimes"].sum().idxmax()
 
@@ -182,18 +194,41 @@ with tab1:
 
     with col1:
         st.subheader("Top Districts")
-        top10 = (
+
+        top_df = (
             df_pre.groupby("district_name")["selected_total_crimes"]
             .sum()
-            .sort_values(ascending=False)
-            .head(10)
+            .reset_index()
         )
-        st.bar_chart(top10)
+
+        top_df["highlight"] = top_df["district_name"] == district
+
+        fig = px.bar(
+            top_df.sort_values("selected_total_crimes", ascending=False).head(10),
+            x="district_name",
+            y="selected_total_crimes",
+            color="highlight",
+            color_discrete_map={True: "#1f2937", False: "#93c5fd"}
+        )
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.subheader("Crime Trend")
-        trend = df_pre.groupby("year")["selected_total_crimes"].sum().reset_index()
-        fig = px.line(trend, x="year", y="selected_total_crimes", markers=True)
+
+        trend_df = (
+            df_pre.groupby("year")["selected_total_crimes"]
+            .sum()
+            .reset_index()
+        )
+
+        fig = px.line(
+            trend_df,
+            x="year",
+            y="selected_total_crimes",
+            markers=True
+        )
+        fig.update_traces(line=dict(width=4))
         st.plotly_chart(fig, use_container_width=True)
 
 # ==================================================
@@ -219,7 +254,7 @@ with tab3:
     st.pyplot(fig)
 
 # ==================================================
-# PREDICTION TAB (ACADEMIC DEMO)
+# PREDICTION TAB
 # ==================================================
 with tab4:
     x = df[feature_columns]
@@ -232,45 +267,57 @@ with tab4:
     st.markdown(f"**RMSE:** {np.sqrt(mean_squared_error(y_test, y_pred)):.2f}")
 
 # ==================================================
-# HOTSPOT MAP – STATE-WISE CHOROPLETH
+# HOTSPOT MAP – TRUE FILTER-DRIVEN
 # ==================================================
 with tab5:
-    st.subheader("Crime Hotspot Map (State-wise)")
+    st.subheader(
+        f"Crime Hotspots ({year_range[0]}–{year_range[1]})"
+    )
 
-    state_map_df = (
+    st.caption(
+        f"Hotspot intensity based on selected crime types: "
+        f"{', '.join(selected_crimes)}"
+    )
+
+    map_df = (
         df_pre.groupby("state_name")["selected_total_crimes"]
         .sum()
         .reset_index()
     )
 
-    if state_map_df.empty:
-        st.info("No data available for selected filters.")
-    else:
-        fig = px.choropleth_mapbox(
-            state_map_df,
-            geojson=india_states_geojson(),
-            locations="state_name",
-            featureidkey="properties.ST_NM",
-            color="selected_total_crimes",
-            color_continuous_scale="Reds",
-            mapbox_style="carto-positron",
-            zoom=3.5,
-            center={"lat": 22.5, "lon": 79},
-            opacity=0.75,
-            hover_name="state_name",
-            height=600
-        )
+    fig = px.choropleth_mapbox(
+        map_df,
+        geojson="https://raw.githubusercontent.com/datameet/maps/master/States/india_states.geojson",
+        locations="state_name",
+        featureidkey="properties.ST_NM",
+        color="selected_total_crimes",
+        color_continuous_scale=["#fee2e2", "#fca5a5", "#ef4444", "#7f1d1d"],
+        hover_name="state_name",
+        hover_data={"selected_total_crimes": True},
+        mapbox_style="carto-positron",
+        zoom=4.2,
+        center={"lat": 22.5, "lon": 79},
+        opacity=0.85,
+        height=650
+    )
 
-        fig.update_layout(
-            margin={"r": 0, "t": 0, "l": 0, "b": 0}
-        )
+    fig.update_layout(
+        margin={"r": 0, "t": 0, "l": 0, "b": 0},
+        coloraxis_colorbar=dict(title="Crime Intensity")
+    )
 
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.info(
+        "Hotspots update automatically based on year range, crime types, "
+        "state and district filters. District-level geographic visualization "
+        "requires boundary data, which is not present in the dataset."
+    )
 
 # ==================================================
 # FOOTER
 # ==================================================
 st.caption(
-    "CrimeScope | Interactive preprocessing and state-wise crime hotspot analysis. "
-    "Choropleth visualization is used due to the absence of incident-level coordinates."
+    "CrimeScope | Interactive IPC crime analytics dashboard. "
+    "Designed for analytical clarity and decision support."
 )
