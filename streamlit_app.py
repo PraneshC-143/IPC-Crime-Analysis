@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # ==================================================
-# MINIMAL, ACADEMIC UI
+# CLEAN ACADEMIC UI
 # ==================================================
 st.markdown("""
 <style>
@@ -59,15 +59,22 @@ def load_data(file):
     features = crime_cols.tolist() + ["year"]
     return df, crime_cols, features
 
-@st.cache_data
-def load_geo():
-    return pd.read_csv("district_lat_long.csv")
-
-df, crime_columns, feature_columns = load_data("districtwise-ipc-crimes.xlsx")
-geo_df = load_geo()
+df, crime_columns, feature_columns = load_data(
+    "districtwise-ipc-crimes.xlsx"
+)
 
 # ==================================================
-# MODEL (UNCHANGED LOGIC)
+# INDIA STATES GEOJSON (NO LAT/LON NEEDED)
+# ==================================================
+@st.cache_data
+def india_states_geojson():
+    return (
+        "https://raw.githubusercontent.com/"
+        "datameet/maps/master/States/india_states.geojson"
+    )
+
+# ==================================================
+# MODEL (ACADEMIC – UNCHANGED LOGIC)
 # ==================================================
 @st.cache_resource
 def train_model(x, y):
@@ -83,9 +90,10 @@ def train_model(x, y):
     return model, x_test, y_test
 
 # ==================================================
-# SIDEBAR — FILTERS + PREPROCESSING CONTROLS
+# SIDEBAR – FILTERS & PREPROCESSING
 # ==================================================
 st.sidebar.title("CrimeScope")
+st.sidebar.caption("District-wise IPC Crime Analysis")
 
 state = st.sidebar.selectbox(
     "State",
@@ -132,13 +140,12 @@ df_pre["selected_total_crimes"] = df_pre[selected_crimes].sum(axis=1)
 
 if aggregation_mode == "Average per Year":
     df_pre["selected_total_crimes"] = (
-        df_pre
-        .groupby("district_name")["selected_total_crimes"]
+        df_pre.groupby("district_name")["selected_total_crimes"]
         .transform("mean")
     )
 
 # ==================================================
-# HEADER + KPI
+# HEADER & KPI
 # ==================================================
 st.markdown("## District-wise IPC Crime Analysis")
 
@@ -168,37 +175,39 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 )
 
 # ==================================================
-# OVERVIEW
+# OVERVIEW TAB
 # ==================================================
 with tab1:
     col1, col2 = st.columns(2)
 
     with col1:
+        st.subheader("Top Districts")
         top10 = (
             df_pre.groupby("district_name")["selected_total_crimes"]
             .sum()
             .sort_values(ascending=False)
             .head(10)
         )
-        st.subheader("Top Districts")
         st.bar_chart(top10)
 
     with col2:
+        st.subheader("Crime Trend")
         trend = df_pre.groupby("year")["selected_total_crimes"].sum().reset_index()
         fig = px.line(trend, x="year", y="selected_total_crimes", markers=True)
-        st.subheader("Crime Trend")
         st.plotly_chart(fig, use_container_width=True)
 
 # ==================================================
-# DISTRIBUTION
+# DISTRIBUTION TAB
 # ==================================================
 with tab2:
     fig, ax = plt.subplots(figsize=(9, 5))
     sns.histplot(df_pre["selected_total_crimes"], bins=30, kde=True, ax=ax)
+    ax.set_xlabel("Total Crimes")
+    ax.set_ylabel("Frequency")
     st.pyplot(fig)
 
 # ==================================================
-# RELATIONSHIPS
+# RELATIONSHIPS TAB
 # ==================================================
 with tab3:
     fig, ax = plt.subplots(figsize=(11, 6))
@@ -210,7 +219,7 @@ with tab3:
     st.pyplot(fig)
 
 # ==================================================
-# PREDICTION (UNCHANGED ACADEMIC DEMO)
+# PREDICTION TAB (ACADEMIC DEMO)
 # ==================================================
 with tab4:
     x = df[feature_columns]
@@ -223,41 +232,45 @@ with tab4:
     st.markdown(f"**RMSE:** {np.sqrt(mean_squared_error(y_test, y_pred)):.2f}")
 
 # ==================================================
-# HOTSPOT MAP (REAL GEOGRAPHICAL MAP)
+# HOTSPOT MAP – STATE-WISE CHOROPLETH
 # ==================================================
 with tab5:
-    st.subheader("Crime Hotspot Map")
+    st.subheader("Crime Hotspot Map (State-wise)")
 
-    map_df = df_pre.merge(
-        geo_df,
-        on=["district_name", "state_name"],
-        how="inner"
+    state_map_df = (
+        df_pre.groupby("state_name")["selected_total_crimes"]
+        .sum()
+        .reset_index()
     )
 
-    fig = px.scatter_mapbox(
-        map_df,
-        lat="lat",
-        lon="lon",
-        size="selected_total_crimes",
-        color="selected_total_crimes",
-        hover_name="district_name",
-        hover_data={"state_name": True},
-        zoom=4,
-        height=600,
-        color_continuous_scale="Reds"
-    )
+    if state_map_df.empty:
+        st.info("No data available for selected filters.")
+    else:
+        fig = px.choropleth_mapbox(
+            state_map_df,
+            geojson=india_states_geojson(),
+            locations="state_name",
+            featureidkey="properties.ST_NM",
+            color="selected_total_crimes",
+            color_continuous_scale="Reds",
+            mapbox_style="carto-positron",
+            zoom=3.5,
+            center={"lat": 22.5, "lon": 79},
+            opacity=0.75,
+            hover_name="state_name",
+            height=600
+        )
 
-    fig.update_layout(
-        mapbox_style="carto-positron",
-        margin={"r":0,"t":0,"l":0,"b":0}
-    )
+        fig.update_layout(
+            margin={"r": 0, "t": 0, "l": 0, "b": 0}
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
 # ==================================================
 # FOOTER
 # ==================================================
 st.caption(
-    "CrimeScope | Interactive preprocessing & geographic hotspot analysis. "
-    "District centroids used due to lack of incident-level coordinates."
+    "CrimeScope | Interactive preprocessing and state-wise crime hotspot analysis. "
+    "Choropleth visualization is used due to the absence of incident-level coordinates."
 )
